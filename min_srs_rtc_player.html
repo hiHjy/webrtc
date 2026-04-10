@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Minimal SRS RTC Player</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #131c2f;
+      --text: #e6edf7;
+      --muted: #9fb0cf;
+      --accent: #4da3ff;
+      --ok: #59c98b;
+      --warn: #ffca66;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: radial-gradient(circle at 20% 0%, #182744 0%, var(--bg) 55%);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 960px;
+      margin: 24px auto;
+      padding: 0 16px;
+    }
+    .card {
+      background: linear-gradient(180deg, #17233d 0%, var(--panel) 100%);
+      border: 1px solid #243454;
+      border-radius: 14px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 10px;
+      margin-bottom: 10px;
+      align-items: center;
+    }
+    label { color: var(--muted); font-size: 14px; }
+    input {
+      width: 100%;
+      color: var(--text);
+      background: #0e1628;
+      border: 1px solid #29406a;
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    button {
+      background: #1d4f90;
+      border: 1px solid #2a6ac1;
+      color: white;
+      border-radius: 8px;
+      padding: 8px 14px;
+      cursor: pointer;
+    }
+    button:hover { filter: brightness(1.1); }
+    button.secondary { background: #2a3247; border-color: #3c4868; }
+    #video {
+      width: 100%;
+      max-height: 520px;
+      background: #000;
+      border-radius: 10px;
+      border: 1px solid #2d3f63;
+    }
+    #status { color: var(--ok); font-size: 14px; }
+    #target { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    #stats { color: var(--warn); font-size: 13px; margin-top: 8px; white-space: pre-wrap; }
+    #log {
+      width: 100%;
+      min-height: 170px;
+      color: #d9e7ff;
+      background: #0b1325;
+      border: 1px solid #2c3d63;
+      border-radius: 10px;
+      padding: 10px;
+      overflow: auto;
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="row">
+        <label for="host">SRS Host</label>
+        <input id="host" value="192.168.1.27" />
+      </div>
+      <div class="row">
+        <label for="apiPort">API Port</label>
+        <input id="apiPort" value="1985" />
+      </div>
+      <div class="row">
+        <label for="app">App</label>
+        <input id="app" value="live" />
+      </div>
+      <div class="row">
+        <label for="stream">Stream</label>
+        <input id="stream" value="test" />
+      </div>
+      <div class="actions">
+        <button id="playBtn">开始播放</button>
+        <button id="stopBtn" class="secondary">停止</button>
+      </div>
+      <div id="status">状态: idle</div>
+      <div id="target"></div>
+      <div id="stats"></div>
+    </div>
+
+    <div class="card">
+      <video id="video" controls autoplay playsinline muted></video>
+    </div>
+
+    <div class="card">
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const els = {
+      host: $("host"),
+      apiPort: $("apiPort"),
+      app: $("app"),
+      stream: $("stream"),
+      playBtn: $("playBtn"),
+      stopBtn: $("stopBtn"),
+      status: $("status"),
+      target: $("target"),
+      stats: $("stats"),
+      log: $("log"),
+      video: $("video"),
+    };
+
+    let pc = null;
+    let statsTimer = null;
+
+    function log(msg) {
+      const t = new Date().toLocaleTimeString();
+      els.log.textContent += `[${t}] ${msg}\n`;
+      els.log.scrollTop = els.log.scrollHeight;
+      console.log(msg);
+    }
+
+    function setStatus(text) {
+      els.status.textContent = `状态: ${text}`;
+    }
+
+    function updateTarget() {
+      const host = els.host.value.trim();
+      const apiPort = els.apiPort.value.trim();
+      const app = els.app.value.trim();
+      const stream = els.stream.value.trim();
+      els.target.textContent = `拉流目标: webrtc://${host}/${app}/${stream} (api:${apiPort})`;
+    }
+
+    function stop() {
+      if (statsTimer) {
+        clearInterval(statsTimer);
+        statsTimer = null;
+      }
+      if (pc) {
+        pc.ontrack = null;
+        pc.onconnectionstatechange = null;
+        pc.oniceconnectionstatechange = null;
+        pc.close();
+        pc = null;
+      }
+      els.video.srcObject = null;
+      setStatus("stopped");
+    }
+
+    function waitIceComplete(peer) {
+      if (peer.iceGatheringState === "complete") return Promise.resolve();
+      return new Promise((resolve) => {
+        const onChange = () => {
+          if (peer.iceGatheringState === "complete") {
+            peer.removeEventListener("icegatheringstatechange", onChange);
+            resolve();
+          }
+        };
+        peer.addEventListener("icegatheringstatechange", onChange);
+      });
+    }
+
+    function startStats(peer) {
+      statsTimer = setInterval(async () => {
+        if (!peer) return;
+        const reports = await peer.getStats();
+        let line = "inbound-rtp(video): not found";
+        reports.forEach((r) => {
+          const isVideoInbound = r.type === "inbound-rtp" &&
+            (r.kind === "video" || r.mediaType === "video");
+          if (isVideoInbound) {
+            line = [
+              `packetsReceived=${r.packetsReceived ?? "-"}`,
+              `bytesReceived=${r.bytesReceived ?? "-"}`,
+              `framesDecoded=${r.framesDecoded ?? "-"}`,
+              `keyFramesDecoded=${r.keyFramesDecoded ?? "-"}`,
+              `pliCount=${r.pliCount ?? "-"}`,
+              `jitter=${r.jitter ?? "-"}`,
+            ].join(", ");
+          }
+        });
+        els.stats.textContent = line;
+      }, 1000);
+    }
+
+    async function play() {
+      stop();
+      els.log.textContent = "";
+      const host = els.host.value.trim();
+      const apiPort = els.apiPort.value.trim();
+      const app = els.app.value.trim();
+      const stream = els.stream.value.trim();
+      const api = `http://${host}:${apiPort}/rtc/v1/play/`;
+      const streamurl = `webrtc://${host}/${app}/${stream}`;
+
+      log(`api=${api}`);
+      log(`streamurl=${streamurl}`);
+      setStatus("connecting");
+
+      pc = new RTCPeerConnection({ iceServers: [] });
+      pc.addTransceiver("video", { direction: "recvonly" });
+
+      pc.onconnectionstatechange = () => {
+        log(`pc.connectionState=${pc.connectionState}`);
+        setStatus(pc.connectionState);
+      };
+      pc.oniceconnectionstatechange = () => log(`pc.iceConnectionState=${pc.iceConnectionState}`);
+      pc.ontrack = async (ev) => {
+        log(`ontrack: kind=${ev.track.kind}, streams=${ev.streams.length}`);
+        const streamObj = ev.streams[0] || new MediaStream([ev.track]);
+        els.video.srcObject = streamObj;
+        try {
+          await els.video.play();
+          log("video.play() ok");
+        } catch (e) {
+          log(`video.play() failed: ${e}`);
+        }
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await waitIceComplete(pc);
+
+      const req = {
+        api,
+        streamurl,
+        clientip: null,
+        sdp: pc.localDescription.sdp,
+      };
+      log("POST /rtc/v1/play/");
+      const resp = await fetch(api, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      const data = await resp.json();
+      log(`play response code=${data.code}`);
+      if (data.code !== 0 || !data.sdp) {
+        throw new Error(`SRS play failed: ${JSON.stringify(data)}`);
+      }
+
+      await pc.setRemoteDescription({ type: "answer", sdp: data.sdp });
+      log("remote description set");
+      setStatus("connected");
+      startStats(pc);
+    }
+
+    els.playBtn.onclick = () => play().catch((e) => {
+      log(`ERROR: ${e.message || e}`);
+      setStatus("error");
+    });
+    els.stopBtn.onclick = () => stop();
+
+    const qp = new URLSearchParams(location.search);
+    if (qp.get("host")) els.host.value = qp.get("host");
+    if (qp.get("api")) els.apiPort.value = qp.get("api");
+    if (qp.get("app")) els.app.value = qp.get("app");
+    if (qp.get("stream")) els.stream.value = qp.get("stream");
+    [els.host, els.apiPort, els.app, els.stream].forEach((el) => {
+      el.addEventListener("input", updateTarget);
+    });
+    updateTarget();
+  </script>
+</body>
+</html>
