@@ -1,0 +1,179 @@
+# 编译产物
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.out
+*.app
+
+# 可执行文件（常见命名）
+a.out
+a.exe
+
+# 调试和符号文件
+*.dSYM/
+*.pdb
+*.idb
+*.ilk
+*.map
+
+# 预编译头
+*.gch
+*.pch
+
+# 构建目录
+build/
+cmake-build-*/
+out/
+Debug/
+Release/
+x64/
+x86/
+Win32/
+bin/
+obj/
+
+# CMake 生成文件
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+CTestTestfile.cmake
+*-prefix.cmake
+
+# Makefile 生成（非源码）
+Makefile
+*.mk
+!Makefile.am
+!*.mk.in
+
+# 编译器临时文件
+*.swp
+*.swo
+*~
+*.bak
+*.orig
+
+# IDE 配置
+## Visual Studio
+.vs/
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+## CLion
+.idea/
+cmake-build-*/
+*.iml
+
+## VS Code
+.vscode/
+*.code-workspace
+
+## Qt Creator
+*.user
+*.creator
+*.files
+*.includes
+*.config
+
+## CodeBlocks
+*.cbp
+*.depend
+*.layout
+cb_temp/
+
+## Eclipse
+.cproject
+.project
+.settings/
+.csettings/
+.classpath
+
+## Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+
+## CLion
+.idea/
+
+# 日志和性能文件
+*.log
+*.perf
+*.prof
+*.gcov
+*.gcda
+*.gcno
+*.trace
+
+# 打包文件
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.rar
+
+# 依赖管理
+## vcpkg
+vcpkg_installed/
+vcpkg-manifest-install.log
+
+## Conan
+conaninfo.txt
+conanbuildinfo.*
+conanbuildinfo.cmake
+
+## Hunter
+_Base/
+_hunter/
+
+# 文档生成
+docs/html/
+docs/latex/
+doxygen/
+*.docset
+
+# 测试覆盖率
+*.gcda
+*.gcno
+*.gcov
+coverage/
+htmlcov/
+
+# 临时文件
+*.tmp
+*.temp
+*.cache
+*.stamp
+
+# 本地配置
+config.local.h
+*.local
+*.secret
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# 其他
+*.stackdump
+*.core
+core.*
+*.dmp
+*.dump
+Thumbs.db
+.DS_Store
