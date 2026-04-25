@@ -27,6 +27,7 @@ a.exe
 
 # 构建目录
 build/
+build-aarch64/
 cmake-build-*/
 out/
 Debug/
@@ -111,6 +112,8 @@ xcuserdata/
 
 # 日志和性能文件
 *.log
+*.nv12
+*.nv12.info
 *.perf
 *.prof
 *.gcov
