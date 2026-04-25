@@ -128,7 +128,7 @@ static void msleep(unsigned int ms)
     usleep(ms * 1000);
 }
 
-const char *get_mpp_frame_fmt_name(RK_U32 fmt)
+static const char *rk_mpp_frame_fmt_name(RK_U32 fmt)
 {
     switch (fmt) {
     case MPP_FMT_YUV420SP:
@@ -201,7 +201,7 @@ const char *get_mpp_frame_fmt_name(RK_U32 fmt)
 /*
  * 把解码出的 frame 按 NV12 文件格式写到磁盘。
  */
-void dump_frame_nv12(MppFrame frame, FILE *fp_out)
+static void rk_mpp_dump_frame_nv12(MppFrame frame, FILE *fp_out)
 {
     MppBuffer buffer = NULL;
     MppFrameFormat fmt;
@@ -317,7 +317,7 @@ void rk_mpp_decoder_set_frame_callback(RkMppDecoder *dec,
  * 1. 解码器已经知道输出宽高/stride/buf_size
  * 2. 但它还在等应用层准备输出缓冲
  */
-int rk_mpp_decoder_handle_info_change(RkMppDecoder *dec, MppFrame frame)
+static int rk_mpp_decoder_handle_info_change(RkMppDecoder *dec, MppFrame frame)
 {
     MPP_RET ret;
     RK_U32 width = mpp_frame_get_width(frame);
@@ -429,7 +429,7 @@ int rk_mpp_decoder_handle_info_change(RkMppDecoder *dec, MppFrame frame)
  * 如果是 info_change，就走缓冲准备流程；
  * 如果是正常图像帧，就统计并按 NV12 写文件。
  */
-int rk_mpp_decoder_handle_frame(RkMppDecoder *dec, MppFrame frame)
+static int rk_mpp_decoder_handle_frame(RkMppDecoder *dec, MppFrame frame)
 {
     RK_U32 fmt = mpp_frame_get_fmt(frame);
     RK_U32 width = mpp_frame_get_width(frame);
@@ -439,7 +439,7 @@ int rk_mpp_decoder_handle_frame(RkMppDecoder *dec, MppFrame frame)
     MppBuffer buf = mpp_frame_get_buffer(frame);
     int fd = buf ? mpp_buffer_get_fd(buf) : -1;
     printf("frame=%p fmt=%u(%s) info_change=%d eos=%d\n",
-           frame, fmt, get_mpp_frame_fmt_name(fmt),
+           frame, fmt, rk_mpp_frame_fmt_name(fmt),
            mpp_frame_get_info_change(frame), mpp_frame_get_eos(frame));
 
     if (mpp_frame_get_info_change(frame))
@@ -447,7 +447,7 @@ int rk_mpp_decoder_handle_frame(RkMppDecoder *dec, MppFrame frame)
 
     printf("成功读取到一帧数据 %d\n", ++dec->frame_count);
     if (dec->f_out && !mpp_frame_get_errinfo(frame))
-        dump_frame_nv12(frame, dec->f_out);
+        rk_mpp_dump_frame_nv12(frame, dec->f_out);
 
     if (dec->frame_callback && !mpp_frame_get_errinfo(frame)) {
         MppBuffer buffer = mpp_frame_get_buffer(frame);
@@ -474,13 +474,13 @@ int rk_mpp_decoder_handle_frame(RkMppDecoder *dec, MppFrame frame)
  * 1  : 收到真正的 eos frame，整个解码完成
  * <0 : 出错
  */
-int rk_mpp_decoder_poll_frames(RkMppDecoder *dec)
+static int rk_mpp_decoder_poll_frames(RkMppDecoder *dec)
 {
     while (1) {
         MPP_RET ret;
+        MppFrame frame = NULL;
 
-        dec->frame = NULL;
-        ret = dec->mpi->decode_get_frame(dec->ctx, &dec->frame);
+        ret = dec->mpi->decode_get_frame(dec->ctx, &frame);
         printf("调用 decode_get_frame ret=%d\n", ret);
         if (ret == MPP_ERR_TIMEOUT) {
             dec->timeout_count++;
@@ -498,23 +498,23 @@ int rk_mpp_decoder_poll_frames(RkMppDecoder *dec)
         dec->timeout_count = 0;
         dec->eos_wait_count = 0;
 
-        if (!dec->frame) {
+        if (!frame) {
             printf("空\n");
             return 0;
         }
 
-        if (rk_mpp_decoder_handle_frame(dec, dec->frame)) {
-            mpp_frame_deinit(&dec->frame);
+        if (rk_mpp_decoder_handle_frame(dec, frame)) {
+            mpp_frame_deinit(&frame);
             return -1;
         }
 
-        if (mpp_frame_get_eos(dec->frame)) {
+        if (mpp_frame_get_eos(frame)) {
             printf("got eos frame, decode finished\n");
-            mpp_frame_deinit(&dec->frame);
+            mpp_frame_deinit(&frame);
             return 1;
         }
-        
-        mpp_frame_deinit(&dec->frame);
+
+        mpp_frame_deinit(&frame);
     }
 
 }
@@ -599,58 +599,13 @@ int rk_mpp_decoder_send_data(RkMppDecoder *dec,
  * 2. 调用 rk_mpp_decoder_send_data()
  * 3. 文件结束后进入 drain
  */
-int rk_mpp_decoder_run_file(RkMppDecoder *dec, FILE *f_in)
-{
-    uint8_t buf[BUF_SIZE] = {0};
-    size_t read_size = 0;
-    size_t total_read = 0;
-
-    while (1) {
-        int ret;
-        int eos = 0;
-
-        read_size = fread(buf, 1, BUF_SIZE, f_in);
-        total_read += read_size;
-
-        if (read_size == 0) {
-            eos = 1;
-            printf("读到码流文件末尾, total_read=%zu\n", total_read);
-        } else {
-            printf("从码流文件中读取到数据 size:%zu total:%zu\n",
-                   read_size, total_read);
-        }
-
-        ret = rk_mpp_decoder_send_data(dec, buf, read_size, eos);
-        if (ret < 0)
-            return -1;
-        if (ret > 0)
-            return 0;
-
-        if (eos) {
-            while (1) {
-                ret = rk_mpp_decoder_poll_frames(dec);
-                if (ret < 0)
-                    return -1;
-                if (ret > 0)
-                    return 0;
-
-                if (dec->eos_wait_count > EOS_WAIT_TIMEOUT_COUNT) {
-                    printf("wait eos frame timeout after %d frames, exit normally\n",
-                           dec->frame_count);
-                    return 0;
-                }
-                msleep(1);
-            }
-        }
-    }
-}
-
 void rk_mpp_decoder_deinit(RkMppDecoder *dec)
 {
+    if (!dec)
+        return;
+
     if (dec->packet)
         mpp_packet_deinit(&dec->packet);
-    if (dec->frame)
-        mpp_frame_deinit(&dec->frame);
     if (dec->dec_cfg)
         mpp_dec_cfg_deinit(dec->dec_cfg);
     if (dec->ctx)
@@ -658,43 +613,4 @@ void rk_mpp_decoder_deinit(RkMppDecoder *dec)
     if (dec->frm_grp)
         mpp_buffer_group_put(dec->frm_grp);
     rk_mpp_decoder_release_ext_dma_fds(dec);
-}
-
-void decode(const char *input, const char *output, MppCodingType type)
-{
-    RkMppDecoder dec;
-    FILE *f_in = NULL;
-    FILE *f_out = NULL;
-
-    f_in = fopen(input, "rb");
-    if (f_in == NULL) {
-        perror("fopen");
-        return;
-    }
-
-    if (output) {
-        f_out = fopen(output, "wb");
-        if (f_out == NULL) {
-            perror("fopen output");
-            fclose(f_in);
-            return;
-        }
-    }
-
-    if (rk_mpp_decoder_init(&dec, type, f_out)) {
-        rk_mpp_decoder_deinit(&dec);
-        if (f_in)
-            fclose(f_in);
-        if (f_out)
-            fclose(f_out);
-        return;
-    }
-
-    rk_mpp_decoder_run_file(&dec, f_in);
-
-    rk_mpp_decoder_deinit(&dec);
-    if (f_in)
-        fclose(f_in);
-    if (f_out)
-        fclose(f_out);
 }
