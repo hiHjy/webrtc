@@ -117,6 +117,30 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
     libswscale
     libswresample
 )
+
+function(_strip_sysroot_usr_include target_name)
+    foreach(_prop INTERFACE_INCLUDE_DIRECTORIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES)
+        get_target_property(_dirs ${target_name} ${_prop})
+        if(NOT _dirs OR _dirs STREQUAL "_dirs-NOTFOUND")
+            continue()
+        endif()
+
+        set(_filtered_dirs "")
+        foreach(_dir IN LISTS _dirs)
+            if(_dir STREQUAL "${CMAKE_SYSROOT}/usr/include")
+                continue()
+            endif()
+            list(APPEND _filtered_dirs "${_dir}")
+        endforeach()
+
+        set_target_properties(${target_name} PROPERTIES ${_prop} "${_filtered_dirs}")
+    endforeach()
+endfunction()
+
+_strip_sysroot_usr_include(PkgConfig::LIBDRM)
+_strip_sysroot_usr_include(PkgConfig::RKMPP)
+_strip_sysroot_usr_include(PkgConfig::FFMPEG)
+
 find_path(NLOHMANN_JSON_INCLUDE_DIR
     nlohmann/json.hpp
     PATHS
@@ -190,7 +214,6 @@ if(WEBRTC_LIBRARY_SOURCES)
         PUBLIC
             "${CMAKE_CURRENT_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/include/rkmpp"
-            "${WEBRTC_SYSROOT_INCLUDE_DIR}"
             "${WEBRTC_ROCKCHIP_INCLUDE_DIR}"
             "${WEBRTC_FFMPEG_INCLUDE_DIR}"
             "${NLOHMANN_JSON_INCLUDE_DIR}"
@@ -220,7 +243,6 @@ if(WEBRTC_MAIN_SOURCE)
         PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/include/rkmpp"
-            "${WEBRTC_SYSROOT_INCLUDE_DIR}"
             "${WEBRTC_ROCKCHIP_INCLUDE_DIR}"
             "${WEBRTC_FFMPEG_INCLUDE_DIR}"
             "${NLOHMANN_JSON_INCLUDE_DIR}"

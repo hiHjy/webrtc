@@ -14,8 +14,8 @@
 {
   "directory": "/home/alientek/webrtc/build-aarch64",
   "command": "/home/alientek/rk3568_linux5.10_sdk/buildroot/output/rockchip_atk_dlrk3568/host/bin/aarch64-buildroot-linux-gnu-g++ --sysroot=/home/alientek/rk3568_linux5.10_sdk/buildroot/output/rockchip_atk_dlrk3568/host/aarch64-buildroot-linux-gnu/sysroot  -I/home/alientek/webrtc/include -I/home/alientek/webrtc/include/rkmpp -I/home/alientek/rk3568_linux5.10_sdk/buildroot/output/rockchip_atk_dlrk3568/host/aarch64-buildroot-linux-gnu/sysroot/usr/include/rockchip -isystem /home/alientek/rk3568_linux5.10_sdk/buildroot/output/rockchip_atk_dlrk3568/host/aarch64-buildroot-linux-gnu/sysroot/opt/ffmpeg61/include -isystem /home/alientek/rk3568_linux5.10_sdk/buildroot/output/rockchip_atk_dlrk3568/host/aarch64-buildroot-linux-gnu/sysroot/usr/include/libdrm -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64  -Os -g0 -D_FORTIFY_SOURCE=1 -std=c++17 -Wall -Wextra -o CMakeFiles/webrtc_src.dir/src/drm_atomic_display.cpp.o -c /home/alientek/webrtc/src/drm_atomic_display.cpp",
-  "file": "/home/alientek/webrtc/src/drm_atomic_display.cpp",
-  "output": "CMakeFiles/webrtc_src.dir/src/drm_atomic_display.cpp.o"
+  "file": "/home/alientek/webrtc/src/drm_display.cpp",
+  "output": "CMakeFiles/webrtc_src.dir/src/drm_display.cpp.o"
 },
 {
   "directory": "/home/alientek/webrtc/build-aarch64",

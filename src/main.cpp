@@ -1,4 +1,5 @@
-#include "drm_atomic_display.hpp"
+
+#include "drm_display.hpp"
 #include "rkmpp_dec.h"
 #include "rkmpp_enc.h"
 #include "srstowebrtc.hpp"
@@ -8,6 +9,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <cerrno>
 #include <iomanip>
 #include <iostream>
 #include <mutex>
@@ -87,8 +89,8 @@ struct AppContext {
         RK_U32 v_stride = 0;
     };
 
-    /* DRM 原子显示对象和它对应的线程同步原语 */
-    DrmAtomicDisplay display;
+    /* DRM 上下文和它对应的线程同步原语 */
+    DRM_Ctx drm_ctx;
     std::mutex display_mutex;
     std::condition_variable display_cv;
     PendingFrame latest_frame;
@@ -212,6 +214,14 @@ void DisplayThreadMain(AppContext *app_ctx) {
         return;
     }
 
+    if (drmInit(&app_ctx->drm_ctx) != 0) {
+        std::cerr << "[display-thread] drmInit failed" << std::endl;
+        if (SrsToWebRTC::getInstance()) {
+            SrsToWebRTC::getInstance()->setStopRequested(true);
+        }
+        return;
+    }
+
     while (true) {
         AppContext::PendingFrame frame;
 
@@ -230,20 +240,51 @@ void DisplayThreadMain(AppContext *app_ctx) {
             app_ctx->has_frame = false;
         }
 
-        if (!app_ctx->display.PresentDmabuf(frame.fd,
-                                            frame.width,
-                                            frame.height,
-                                            frame.h_stride,
-                                            frame.v_stride)) {
-            std::cerr << "[display-thread] DRM present failed: "
-                      << app_ctx->display.LastError() << std::endl;
+        DRM_Buf buf;
+        std::memset(&buf, 0, sizeof(buf));
+        buf.dma_fd = frame.fd;
+        buf.size = static_cast<uint64_t>(frame.h_stride) * frame.v_stride * 3 / 2;
+        buf.w = static_cast<int>(frame.width);
+        buf.h = static_cast<int>(frame.height);
+        buf.fmt = DRM_FORMAT_NV12;
+        buf.pitches[0] = frame.h_stride;
+        buf.pitches[1] = frame.h_stride;
+        buf.offsets[0] = 0;
+        buf.offsets[1] = frame.h_stride * frame.v_stride;
+        buf.modifier = 0;
+
+        while (true) {
+            if (drmDisplaySubmit(&app_ctx->drm_ctx, &buf) == 0) {
+                break;
+            }
+
+            if (errno == EAGAIN) {
+                const int event_ret = drmHandleEvents(&app_ctx->drm_ctx, 3000);
+                if (event_ret >= 0) {
+                    continue;
+                }
+                std::cerr << "[display-thread] drmHandleEvents failed ret="
+                          << event_ret << std::endl;
+            } else {
+                std::cerr << "[display-thread] drmDisplaySubmit failed errno="
+                          << errno << std::endl;
+            }
+
             if (SrsToWebRTC::getInstance()) {
                 SrsToWebRTC::getInstance()->setStopRequested(true);
             }
-            break;
+            drmDeinit(&app_ctx->drm_ctx);
+            std::cout << "[display-thread] exit" << std::endl;
+            return;
         }
     }
 
+    /*
+     * 如果还有 pending page flip，尽量在退出前消费一次事件，
+     * 这样三缓冲状态能正常落稳。
+     */
+    drmHandleEvents(&app_ctx->drm_ctx, 0);
+    drmDeinit(&app_ctx->drm_ctx);
     std::cout << "[display-thread] exit" << std::endl;
 }
 
