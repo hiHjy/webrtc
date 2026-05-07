@@ -27,7 +27,9 @@ a.exe
 
 # 构建目录
 build/
+build-*/
 build-aarch64/
+build-x86/
 cmake-build-*/
 out/
 Debug/
@@ -43,6 +45,7 @@ CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 Makefile
+compile_commands.json
 *.cmake
 !CMakeLists.txt
 CTestTestfile.cmake
@@ -114,6 +117,16 @@ xcuserdata/
 *.log
 *.nv12
 *.nv12.info
+*.yuv
+*.rgb
+*.h264
+*.h265
+*.ivf
+*.mjpeg
+*.jpg
+*.jpeg
+*.wav
+*.pcm
 *.perf
 *.prof
 *.gcov
@@ -173,6 +186,12 @@ config.local.h
 *.sqlite3
 
 # 其他
+libdatachannel.so
+libdatachannel.so.*
+webrtc_push_x86
+webrtc_push_aarch64
+webrtc_test_aarch64
+webrtc_app
 *.stackdump
 *.core
 core.*

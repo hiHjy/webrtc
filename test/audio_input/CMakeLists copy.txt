@@ -1,0 +1,135 @@
+cmake_minimum_required(VERSION 3.16)
+#
+#在家用
+# 这个工程当前面向 RK3568 的交叉编译环境。
+# 下面这组默认值只是“兜底”：
+# - 如果你 shell 里已经 export 了 CC/CXX/SYSROOT，就优先用环境变量
+# - 如果没配环境变量，就退回到这里的默认值
+#
+set(AUDIO_CAPTURE_DEFAULT_SYSROOT "$ENV{HOME}/rk3568_sysroot_fixed")
+set(AUDIO_CAPTURE_DEFAULT_CC "aarch64-linux-gnu-gcc")
+set(AUDIO_CAPTURE_DEFAULT_CXX "aarch64-linux-gnu-g++")
+
+if(DEFINED ENV{CC} AND NOT "$ENV{CC}" STREQUAL "")
+    set(CMAKE_C_COMPILER "$ENV{CC}")
+elseif(NOT CMAKE_C_COMPILER)
+    set(CMAKE_C_COMPILER "${AUDIO_CAPTURE_DEFAULT_CC}")
+endif()
+
+if(DEFINED ENV{CXX} AND NOT "$ENV{CXX}" STREQUAL "")
+    set(CMAKE_CXX_COMPILER "$ENV{CXX}")
+elseif(NOT CMAKE_CXX_COMPILER)
+    set(CMAKE_CXX_COMPILER "${AUDIO_CAPTURE_DEFAULT_CXX}")
+endif()
+
+if(DEFINED ENV{SYSROOT} AND NOT "$ENV{SYSROOT}" STREQUAL "")
+    set(CMAKE_SYSROOT "$ENV{SYSROOT}")
+elseif(EXISTS "${AUDIO_CAPTURE_DEFAULT_SYSROOT}")
+    set(CMAKE_SYSROOT "${AUDIO_CAPTURE_DEFAULT_SYSROOT}")
+endif()
+
+project(audio_capture C CXX)
+
+#
+# 工程本身主要是 C，但头文件统一做了 C++ 兼容，
+# 所以后面如果你的上层用 C++，也可以直接链接这个静态库。
+#
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+#
+# 如果配置了 sysroot，就让 CMake 的头文件、库、package 查找都优先走 sysroot。
+# 这样交叉编译时不会误链接到宿主机的库。
+#
+if(CMAKE_SYSROOT)
+    set(CMAKE_FIND_ROOT_PATH "${CMAKE_SYSROOT}")
+    set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+    set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+    set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+    set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+endif()
+
+#
+# 这里把三层都编进一个静态库：
+# - audio_capture      纯 ALSA 采集层
+# - opus_process       纯 Opus 编码层
+# - audio_stream_manager 调度层
+#
+add_library(audio_capture STATIC
+    src/audio_capture.c
+    src/opus_process.c
+    src/audio_stream_manager.c
+)
+
+target_include_directories(audio_capture
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+#
+# 在交叉编译环境下，把 sysroot 里的头文件和库目录补给目标。
+# 当前工程需要 ALSA 和 Opus，对应头/库都从 sysroot 里找。
+#
+if(CMAKE_SYSROOT)
+    target_include_directories(audio_capture
+        SYSTEM PUBLIC
+            ${CMAKE_SYSROOT}/usr/include
+            ${CMAKE_SYSROOT}/usr/include/alsa
+    )
+
+    target_link_directories(audio_capture
+        PUBLIC
+            ${CMAKE_SYSROOT}/usr/lib
+            ${CMAKE_SYSROOT}/usr/lib/aarch64-linux-gnu
+    )
+endif()
+
+#
+# 如果环境里带了额外编译/链接参数，也透传给目标。
+# 这样你在 SDK 环境里设的 CFLAGS / LDFLAGS 还能继续生效。
+#
+if(DEFINED ENV{CFLAGS} AND NOT "$ENV{CFLAGS}" STREQUAL "")
+    separate_arguments(AUDIO_CAPTURE_CFLAGS UNIX_COMMAND "$ENV{CFLAGS}")
+    target_compile_options(audio_capture PRIVATE ${AUDIO_CAPTURE_CFLAGS})
+endif()
+
+if(DEFINED ENV{CXXFLAGS} AND NOT "$ENV{CXXFLAGS}" STREQUAL "")
+    separate_arguments(AUDIO_CAPTURE_CXXFLAGS UNIX_COMMAND "$ENV{CXXFLAGS}")
+    target_compile_options(audio_capture PRIVATE ${AUDIO_CAPTURE_CXXFLAGS})
+endif()
+
+if(DEFINED ENV{LDFLAGS} AND NOT "$ENV{LDFLAGS}" STREQUAL "")
+    separate_arguments(AUDIO_CAPTURE_LDFLAGS UNIX_COMMAND "$ENV{LDFLAGS}")
+    target_link_options(audio_capture PRIVATE ${AUDIO_CAPTURE_LDFLAGS})
+endif()
+
+#
+# 底层依赖：
+# - asound: ALSA 采集
+# - opus:   Opus 编码
+# - pthread: 后台采集线程
+#
+target_link_libraries(audio_capture
+    PUBLIC
+        asound
+        opus
+        pthread
+)
+
+#
+# 演示程序。
+# 目前 main.c 只是一个很轻量的 demo，用来把 manager 这层跑起来。
+#
+add_executable(audio_capture_demo
+    src/main.c
+)
+
+target_link_libraries(audio_capture_demo
+    PRIVATE
+        audio_capture
+)

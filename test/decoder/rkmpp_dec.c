@@ -8,7 +8,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-#include "ffmpeg_pull_rtsp.h"
+
 
 /*
  * 这是一个“尽量容易看懂”的单线程 MPP 解码示例。
@@ -431,17 +431,24 @@ static int rk_mpp_decoder_handle_info_change(RkMppDecoder *dec, MppFrame frame)
  */
 static int rk_mpp_decoder_handle_frame(RkMppDecoder *dec, MppFrame frame)
 {
-    printf("1\n");
+   
     RK_U32 fmt = mpp_frame_get_fmt(frame);
     RK_U32 width = mpp_frame_get_width(frame);
     RK_U32 height = mpp_frame_get_height(frame);
     RK_U32 h_stride = mpp_frame_get_hor_stride(frame);
     RK_U32 v_stride = mpp_frame_get_ver_stride(frame);
     MppBuffer buf = mpp_frame_get_buffer(frame);
+    RK_U32 size = mpp_frame_get_buf_size(frame);
     int fd = buf ? mpp_buffer_get_fd(buf) : -1;
-    // printf("get frame=%p fmt=%u(%s) info_change=%d eos=%d\n",
-    //        frame, fmt, rk_mpp_frame_fmt_name(fmt),
-    //        mpp_frame_get_info_change(frame), mpp_frame_get_eos(frame));
+    printf("[rkmpp decoder]mpp decoded frame:%p fmt:%u(%s) %ux%u stride=%ux%u buf=%p fd=%d size=%u pts=%lld\n",
+       frame, fmt, rk_mpp_frame_fmt_name(fmt),
+       width, height, h_stride, v_stride,
+       buf, fd, size, mpp_frame_get_pts(frame));
+    printf(" [rkmpp decoder]errinfo=%u discard=%d info_change=%d eos=%d\n",
+       mpp_frame_get_errinfo(frame),
+       mpp_frame_get_discard(frame),
+       mpp_frame_get_info_change(frame),
+       mpp_frame_get_eos(frame));
 
     if (mpp_frame_get_info_change(frame))
         return rk_mpp_decoder_handle_info_change(dec, frame);
@@ -461,6 +468,7 @@ static int rk_mpp_decoder_handle_frame(RkMppDecoder *dec, MppFrame frame)
         }
         printf("2\n");
         dec->frame_callback(data, size, fd, width, height, h_stride, v_stride, fmt,
+                            mpp_frame_get_pts(frame),
                             dec->frame_callback_userdata);
     }
 
@@ -502,9 +510,10 @@ static int rk_mpp_decoder_poll_frames(RkMppDecoder *dec)
         if (!frame) {
             //printf("空\n");
             return 0;
-        } else {
-            printf("[RKMPP Decoder] get frame\n");
-        }
+        } 
+        
+        printf("[RKMPP Decoder] get frame\n");
+        
 
         if (rk_mpp_decoder_handle_frame(dec, frame)) {
             mpp_frame_deinit(&frame);
@@ -530,10 +539,11 @@ static int rk_mpp_decoder_poll_frames(RkMppDecoder *dec)
  *   data / len / eos
  * 基本都可以接到这里。
  */
-int rk_mpp_decoder_send_data(RkMppDecoder *dec,
-                             uint8_t *data,
-                             size_t len,
-                             int eos)
+int rk_mpp_decoder_send_data_with_pts(RkMppDecoder *dec,
+                                      uint8_t *data,
+                                      size_t len,
+                                      int eos,
+                                      RK_S64 pts_us)
 {
     if (!dec) {
         printf("decoder is null\n");
@@ -560,6 +570,8 @@ int rk_mpp_decoder_send_data(RkMppDecoder *dec,
     mpp_packet_set_pos(dec->packet, dec->internal_buf);
     mpp_packet_set_size(dec->packet, len);
     mpp_packet_set_length(dec->packet, len);
+    mpp_packet_set_pts(dec->packet, pts_us);
+    mpp_packet_set_dts(dec->packet, pts_us);
     mpp_packet_clr_eos(dec->packet);
 
     if (eos)
@@ -571,7 +583,8 @@ int rk_mpp_decoder_send_data(RkMppDecoder *dec,
             pkt_done = 1;
             if (eos)
                 dec->eos_sent = 1;
-            printf("packet中的数据送往解码器成功 len=%zu eos=%d\n", len, eos);
+            printf("packet中的数据送往解码器成功 len=%zu eos=%d pts_us=%lld\n",
+                   len, eos, (long long)pts_us);
         } else {
             if (ret == MPP_ERR_BUFFER_FULL) { // MPP_ERR_BUFFER_FULL
                 
@@ -592,6 +605,14 @@ int rk_mpp_decoder_send_data(RkMppDecoder *dec,
     }
 
     return rk_mpp_decoder_poll_frames(dec);
+}
+
+int rk_mpp_decoder_send_data(RkMppDecoder *dec,
+                             uint8_t *data,
+                             size_t len,
+                             int eos)
+{
+    return rk_mpp_decoder_send_data_with_pts(dec, data, len, eos, 0);
 }
 
 /*

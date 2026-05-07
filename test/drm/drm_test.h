@@ -20,7 +20,7 @@
 #define DRM_MAX_CONNECTORS      8
 #define DRM_MAX_MODES           32
 #define DRM_MAX_POSSIBLE_IDS    8
-#define FB_COUNT                32
+#define FB_COUNT                3
 
 #ifdef __cplusplus
 extern "C" {
@@ -83,7 +83,7 @@ typedef struct {
     uint32_t pitches[4];     /* addFB2 使用的 pitches */
     uint32_t offsets[4];     /* addFB2 使用的 offsets */
     uint32_t format;         /* DRM_FORMAT_* */
-    Fb_State state;          /* 三缓冲状态 */
+    Fb_State state;          /* 三缓冲状态 当前其实没有用到，因为当前只支持外部提供dmafd，有个 pending 和 front 就可以了，这个后续可以更加完善*/ 
 } DRM_Fb;
 
 /**
@@ -99,7 +99,7 @@ typedef struct {
  */
 typedef struct {
     DRM_Fb drm_fds[FB_COUNT];
-    int front_idx;
+    int front_idx;              
     int pending_idx;
 } DRM_Buffer_Pool;
 

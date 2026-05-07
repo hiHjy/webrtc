@@ -18,11 +18,15 @@ function(_read_bashrc_export var out_var)
         return()
     endif()
 
-    string(REGEX MATCH "export[ \t]+${var}=\"([^\"]*)\"" _match "${_bashrc_content}")
-    set(_value "${CMAKE_MATCH_1}")
+    string(REGEX MATCH "(^|\n)[ \t]*export[ \t]+${var}=([^\n]*)" _match "${_bashrc_content}")
+    set(_value "${CMAKE_MATCH_2}")
+    string(STRIP "${_value}" _value)
+    if(_value MATCHES "^\"(.*)\"$")
+        set(_value "${CMAKE_MATCH_1}")
+    endif()
 
     if(_value)
-        foreach(_name HOME SDK RK_HOST_ROOT RKMPP_SYSROOT RK_TOOLCHAIN_BIN SYSROOT PKG_CONFIG_PATH GCC_COMPILER CXX_COMPILER)
+        foreach(_name HOME SDK RK_HOST_ROOT RKMPP_SYSROOT RK_TOOLCHAIN_BIN SYSROOT PKG_CONFIG_PATH PKG_CONFIG_LIBDIR GCC_COMPILER CXX_COMPILER CROSS_COMPILE CC CXX)
             if(DEFINED _bashrc_${_name} AND NOT "${_bashrc_${_name}}" STREQUAL "")
                 string(REPLACE "$${_name}" "${_bashrc_${_name}}" _value "${_value}")
                 string(REPLACE "\${${_name}}" "${_bashrc_${_name}}" _value "${_value}")
@@ -39,8 +43,24 @@ _read_bashrc_export(RKMPP_SYSROOT _bashrc_RKMPP_SYSROOT)
 _read_bashrc_export(RK_TOOLCHAIN_BIN _bashrc_RK_TOOLCHAIN_BIN)
 _read_bashrc_export(SYSROOT _bashrc_SYSROOT)
 _read_bashrc_export(PKG_CONFIG_PATH _bashrc_PKG_CONFIG_PATH)
+_read_bashrc_export(PKG_CONFIG_LIBDIR _bashrc_PKG_CONFIG_LIBDIR)
+_read_bashrc_export(CROSS_COMPILE _bashrc_CROSS_COMPILE)
+_read_bashrc_export(CC _bashrc_CC)
+_read_bashrc_export(CXX _bashrc_CXX)
 _read_bashrc_export(GCC_COMPILER _bashrc_GCC_COMPILER)
 _read_bashrc_export(CXX_COMPILER _bashrc_CXX_COMPILER)
+
+function(_resolve_program_path value out_var)
+    if("${value}" STREQUAL "")
+        set(${out_var} "" PARENT_SCOPE)
+    elseif(IS_ABSOLUTE "${value}")
+        set(${out_var} "${value}" PARENT_SCOPE)
+    else()
+        unset(_resolved_program CACHE)
+        find_program(_resolved_program "${value}")
+        set(${out_var} "${_resolved_program}" PARENT_SCOPE)
+    endif()
+endfunction()
 
 set(WEBRTC_AARCH64_SYSROOT "$ENV{SYSROOT}" CACHE PATH "aarch64 sysroot path")
 if("${WEBRTC_AARCH64_SYSROOT}" STREQUAL "")
@@ -51,15 +71,35 @@ set(WEBRTC_AARCH64_C_COMPILER "$ENV{GCC_COMPILER}" CACHE FILEPATH "aarch64 C com
 if("${WEBRTC_AARCH64_C_COMPILER}" STREQUAL "")
     set(WEBRTC_AARCH64_C_COMPILER "${_bashrc_GCC_COMPILER}" CACHE FILEPATH "aarch64 C compiler" FORCE)
 endif()
+if("${WEBRTC_AARCH64_C_COMPILER}" STREQUAL "")
+    set(WEBRTC_AARCH64_C_COMPILER "$ENV{CC}" CACHE FILEPATH "aarch64 C compiler" FORCE)
+endif()
+if("${WEBRTC_AARCH64_C_COMPILER}" STREQUAL "")
+    set(WEBRTC_AARCH64_C_COMPILER "${_bashrc_CC}" CACHE FILEPATH "aarch64 C compiler" FORCE)
+endif()
+_resolve_program_path("${WEBRTC_AARCH64_C_COMPILER}" _resolved_c_compiler)
+set(WEBRTC_AARCH64_C_COMPILER "${_resolved_c_compiler}" CACHE FILEPATH "aarch64 C compiler" FORCE)
 
 set(WEBRTC_AARCH64_CXX_COMPILER "$ENV{CXX_COMPILER}" CACHE FILEPATH "aarch64 C++ compiler")
 if("${WEBRTC_AARCH64_CXX_COMPILER}" STREQUAL "")
     set(WEBRTC_AARCH64_CXX_COMPILER "${_bashrc_CXX_COMPILER}" CACHE FILEPATH "aarch64 C++ compiler" FORCE)
 endif()
+if("${WEBRTC_AARCH64_CXX_COMPILER}" STREQUAL "")
+    set(WEBRTC_AARCH64_CXX_COMPILER "$ENV{CXX}" CACHE FILEPATH "aarch64 C++ compiler" FORCE)
+endif()
+if("${WEBRTC_AARCH64_CXX_COMPILER}" STREQUAL "")
+    set(WEBRTC_AARCH64_CXX_COMPILER "${_bashrc_CXX}" CACHE FILEPATH "aarch64 C++ compiler" FORCE)
+endif()
+_resolve_program_path("${WEBRTC_AARCH64_CXX_COMPILER}" _resolved_cxx_compiler)
+set(WEBRTC_AARCH64_CXX_COMPILER "${_resolved_cxx_compiler}" CACHE FILEPATH "aarch64 C++ compiler" FORCE)
 
 set(WEBRTC_PKG_CONFIG_PATH "$ENV{PKG_CONFIG_PATH}" CACHE STRING "pkg-config search path")
 if("${WEBRTC_PKG_CONFIG_PATH}" STREQUAL "")
     set(WEBRTC_PKG_CONFIG_PATH "${_bashrc_PKG_CONFIG_PATH}" CACHE STRING "pkg-config search path" FORCE)
+endif()
+set(WEBRTC_PKG_CONFIG_LIBDIR "$ENV{PKG_CONFIG_LIBDIR}" CACHE STRING "pkg-config libdir search path")
+if("${WEBRTC_PKG_CONFIG_LIBDIR}" STREQUAL "")
+    set(WEBRTC_PKG_CONFIG_LIBDIR "${_bashrc_PKG_CONFIG_LIBDIR}" CACHE STRING "pkg-config libdir search path" FORCE)
 endif()
 
 if(NOT WEBRTC_AARCH64_C_COMPILER OR NOT EXISTS "${WEBRTC_AARCH64_C_COMPILER}")
@@ -94,6 +134,7 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 
 set(ENV{PKG_CONFIG_SYSROOT_DIR} "${WEBRTC_AARCH64_SYSROOT}")
 set(ENV{PKG_CONFIG_PATH} "${WEBRTC_PKG_CONFIG_PATH}")
+set(ENV{PKG_CONFIG_LIBDIR} "${WEBRTC_PKG_CONFIG_LIBDIR}")
 
 project(webrtc LANGUAGES C CXX)
 
@@ -144,6 +185,7 @@ _strip_sysroot_usr_include(PkgConfig::FFMPEG)
 find_path(NLOHMANN_JSON_INCLUDE_DIR
     nlohmann/json.hpp
     PATHS
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
         /usr/include
         /usr/local/include
     NO_CMAKE_FIND_ROOT_PATH
@@ -226,6 +268,7 @@ if(WEBRTC_LIBRARY_SOURCES)
             PkgConfig::RKMPP
             PkgConfig::FFMPEG
             Threads::Threads
+            pthread
             dl
             m
     )
@@ -258,6 +301,7 @@ if(WEBRTC_MAIN_SOURCE)
                 PkgConfig::RKMPP
                 PkgConfig::FFMPEG
                 Threads::Threads
+                pthread
                 dl
                 m
         )
@@ -272,5 +316,6 @@ endif()
 message(STATUS "Using C compiler   : ${CMAKE_C_COMPILER}")
 message(STATUS "Using CXX compiler : ${CMAKE_CXX_COMPILER}")
 message(STATUS "Using sysroot      : ${CMAKE_SYSROOT}")
-message(STATUS "Using PKG_CONFIG   : $ENV{PKG_CONFIG_PATH}")
+message(STATUS "Using PKG_CONFIG_PATH   : $ENV{PKG_CONFIG_PATH}")
+message(STATUS "Using PKG_CONFIG_LIBDIR : $ENV{PKG_CONFIG_LIBDIR}")
 message(STATUS "Main source        : ${WEBRTC_MAIN_SOURCE}")

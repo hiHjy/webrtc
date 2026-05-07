@@ -14,7 +14,20 @@
 #include <iostream>
 #include <mutex>
 #include <thread>
-
+static int CountStartCode(const uint8_t *p, size_t n)
+{
+    int count = 0;
+    for (size_t i = 0; i + 4 <= n; ++i) {
+        if (p[i] == 0x00 && p[i + 1] == 0x00) {
+            if (p[i + 2] == 0x01) {
+                count++;
+            } else if (i + 3 < n && p[i + 2] == 0x00 && p[i + 3] == 0x01) {
+                count++;
+            }
+        }
+    }
+    return count;
+}
 namespace {
 
 /*
@@ -41,9 +54,9 @@ namespace {
  *   WebRTC 拉流 -> 解码 -> 回调 -> 显示 + dump + 编码
  */
 
-constexpr const char *kDefaultPlayApi = "http://192.168.101.68:1985/rtc/v1/play/";
-constexpr const char *kDefaultStreamUrl = "webrtc://192.168.101.68/live/livestream";
-constexpr const char *kDumpNv12Path = "build-aarch64/1.nv12";
+constexpr const char *kDefaultPlayApi = "http://192.168.1.27:1985/rtc/v1/play/";
+constexpr const char *kDefaultStreamUrl = "webrtc://192.168.1.27/live/test";
+constexpr const char *kDumpNv12Path = "1.nv12";
 constexpr int kDumpNv12FrameCount = 400;
 
 /*
@@ -89,6 +102,13 @@ struct AppContext {
         RK_U32 v_stride = 0;
     };
 
+    struct FPSStat {
+        int webrtc_count = 0;
+        int dec_count = 0;
+        std::chrono::steady_clock::time_point last =
+            std::chrono::steady_clock::now();
+    };
+
     /* DRM 上下文和它对应的线程同步原语 */
     DRM_Ctx drm_ctx;
     std::mutex display_mutex;
@@ -97,6 +117,7 @@ struct AppContext {
     bool has_frame = false;
     bool stop = false;
     bool warned_non_nv12 = false;
+    FPSStat fps;
 
     /*
      * 编码器和显示不同，它目前还是同步调用。
@@ -367,7 +388,43 @@ void DumpNv12Frame(AppContext *app_ctx,
                   << " dumped_frames=" << app_ctx->nv12_dumped_frames << std::endl;
     }
 }
+void UpdateFps(AppContext *app_ctx, int type)
+{
+    using namespace std::chrono;
 
+    if (!app_ctx) {
+        return;
+    }
+
+    if (type == 0) {
+        app_ctx->fps.webrtc_count++;
+    } else if (type == 1) {
+        app_ctx->fps.dec_count++;
+    }
+
+    auto now = steady_clock::now();
+    auto diff = duration_cast<milliseconds>(now - app_ctx->fps.last).count();
+
+    if (diff >= 1000) {
+        const double webrtc_fps = app_ctx->fps.webrtc_count * 1000.0 / diff;
+        const double dec_fps = app_ctx->fps.dec_count * 1000.0 / diff;
+
+        std::cout << "\n\n"
+                  << "============================================================\n"
+                  << "======================  FPS MONITOR  ======================\n"
+                  << "============================================================\n"
+                  << "          WEBRTC CALLBACK FPS : " << webrtc_fps << "\n"
+                  << "          MPP DECODE FPS      : " << dec_fps << "\n"
+                  << "          INTERVAL MS         : " << diff << "\n"
+                  << "============================================================\n"
+                  << "============================================================\n"
+                  << std::endl;
+
+        app_ctx->fps.webrtc_count = 0;
+        app_ctx->fps.dec_count = 0;
+        app_ctx->fps.last = now;
+    }
+}
 /*
  * 解码器吐出一帧后的统一回调。
  *
@@ -396,7 +453,9 @@ void OnDecodedFrame(const uint8_t *data,
                     RK_U32 v_stride,
                     RK_U32 fmt,
                     void *userdata) {
+
     auto *app_ctx = static_cast<AppContext *>(userdata);
+    UpdateFps(app_ctx, 1);
     std::cout << "[mpp-callback]";
 
     std::cout << " data=" << static_cast<const void *>(data)
@@ -409,7 +468,7 @@ void OnDecodedFrame(const uint8_t *data,
               << " fmt=" << fmt;
     PrintHexPreview(data, size, 16);
     std::cout << std::endl;
-
+    
     if (!app_ctx) {
         return;
     }
@@ -440,7 +499,7 @@ void OnDecodedFrame(const uint8_t *data,
      * 这一段和后面的显示/编码没有互斥关系，因为写文件用的是 data，
      * 显示/编码用的是 fd，职责是分开的。
      */
-    DumpNv12Frame(app_ctx, data, size, width, height, h_stride, v_stride);
+    //DumpNv12Frame(app_ctx, data, size, width, height, h_stride, v_stride);
 
     {
         /*
@@ -459,33 +518,33 @@ void OnDecodedFrame(const uint8_t *data,
     }
     app_ctx->display_cv.notify_one();
 
-    /*
-     * 编码器第一次真正需要工作时再初始化。
-     * 这样它拿到的是解码器输出的真实几何参数。
-     */
-    if (!EnsureEncoderReady(app_ctx, width, height, h_stride, v_stride, fmt)) {
-        if (SrsToWebRTC::getInstance()) {
-            SrsToWebRTC::getInstance()->setStopRequested(true);
-        }
-        return;
-    }
+    // /*
+    //  * 编码器第一次真正需要工作时再初始化。
+    //  * 这样它拿到的是解码器输出的真实几何参数。
+    //  */
+    // if (!EnsureEncoderReady(app_ctx, width, height, h_stride, v_stride, fmt)) {
+    //     if (SrsToWebRTC::getInstance()) {
+    //         SrsToWebRTC::getInstance()->setStopRequested(true);
+    //     }
+    //     return;
+    // }
 
-    {
-        /*
-         * 再编码这里直接复用解码帧的 dma-buf fd。
-         *
-         * 也就是说，这里没有再做一份 NV12 内存拷贝，而是把外部 buffer
-         * import 给编码器使用。
-         */
-        std::lock_guard<std::mutex> lock(app_ctx->encoder_mutex);
-        if (rk_mpp_encoder_send_frame(&app_ctx->encoder, fd, 0) != 0) {
-            std::cerr << "[mpp-callback] rk_mpp_encoder_send_frame failed" << std::endl;
-            if (SrsToWebRTC::getInstance()) {
-                SrsToWebRTC::getInstance()->setStopRequested(true);
-            }
-            return;
-        }
-    }
+    // {
+    //     /*
+    //      * 再编码这里直接复用解码帧的 dma-buf fd。
+    //      *
+    //      * 也就是说，这里没有再做一份 NV12 内存拷贝，而是把外部 buffer
+    //      * import 给编码器使用。
+    //      */
+    //     std::lock_guard<std::mutex> lock(app_ctx->encoder_mutex);
+    //     if (rk_mpp_encoder_send_frame(&app_ctx->encoder, fd, 0) != 0) {
+    //         std::cerr << "[mpp-callback] rk_mpp_encoder_send_frame failed" << std::endl;
+    //         if (SrsToWebRTC::getInstance()) {
+    //             SrsToWebRTC::getInstance()->setStopRequested(true);
+    //         }
+    //         return;
+    //     }
+    // }
 }
 
 } // namespace
@@ -531,10 +590,10 @@ int main(int argc, char const *argv[])
 
     SrsToWebRTC app;
     /* 当前 demo 不处理音频，只打印一下观察收流是否正常 */
-    app.setAudioFrameCallback([](rtc::binary frame, rtc::FrameInfo info) {
-        std::cout << "[pull-audio] packet size=" << frame.size()
-                  << " timestamp=" << info.timestamp << std::endl;
-    });
+    // app.setAudioFrameCallback([](rtc::binary frame, rtc::FrameInfo info) {
+    //     std::cout << "[pull-audio] packet size=" << frame.size()
+    //               << " timestamp=" << info.timestamp << std::endl;
+    // });
 
     /*
      * 视频回调拿到的是压缩码流，不是原始图像。
@@ -546,7 +605,7 @@ int main(int argc, char const *argv[])
      */
     app.setVideoFrameCallback([&decoder, &app_ctx](rtc::binary frame, rtc::FrameInfo info) {
         auto *frameData = reinterpret_cast<uint8_t *>(frame.data());
-
+        UpdateFps(&app_ctx, 0);
         std::cout << "[pull-video] annexb_size=" << frame.size()
                   << " timestamp=" << info.timestamp;
         if (info.timestampSeconds) {
@@ -560,7 +619,10 @@ int main(int argc, char const *argv[])
             }
         }
         std::cout << std::endl;
-
+        // std::cout << "[pull-video] annexb_size=" << frame.size()
+        //   << " start_codes=" << CountStartCode(frameData, frame.size())
+        //   << " timestamp=" << info.timestamp
+        //   << std::endl;
         if (rk_mpp_decoder_send_data(&decoder, frameData, frame.size(), 0) != 0) {
             std::cerr << "[pull-video] rk_mpp_decoder_send_data failed, request stop"
                       << std::endl;

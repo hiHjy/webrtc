@@ -1,4 +1,4 @@
-#include "drm_display.hpp"
+#include "drm_test.h"
 
 #include <errno.h>
 
@@ -247,6 +247,18 @@ static int ensurePlaneProps(DRM_Ctx *ctx, uint32_t plane_id)
     return 0;
 }
 
+
+// drmModeAtomicReq 里面本质上是一个“属性修改列表”，类似这样：
+
+// [obj_id, prop_id, value]
+// [obj_id, prop_id, value]
+// ...
+
+// 每次你 drmModeAtomicAddProperty()，都会往这个列表里追加一条。
+
+// 👉 drmModeAtomicSetCursor(req, 0) 的意思就是：
+
+// “把这个列表的写入指针移到开头，从头开始写”
 static drmModeAtomicReq *atomicReqBegin(DRM_Ctx *ctx)
 {
     if (!ctx) {
@@ -516,7 +528,7 @@ static int drmFormatPlaneCount(uint32_t fmt)
     case DRM_FORMAT_NV12:
     case DRM_FORMAT_NV16:
     case DRM_FORMAT_NV24:
-    //case DRM_FORMAT_NV15:
+    case DRM_FORMAT_NV15:
     case fourcc_code('N', 'V', '2', '0'):
     case fourcc_code('N', 'V', '3', '0'):
         return 2;
@@ -698,7 +710,7 @@ static int defaultPitchForFormat(uint32_t fmt, int width, int plane)
     case DRM_FORMAT_NV12:
     case DRM_FORMAT_NV16:
     case DRM_FORMAT_NV24:
-    //case DRM_FORMAT_NV15:
+    case DRM_FORMAT_NV15:
     case fourcc_code('N', 'V', '2', '0'):
     case fourcc_code('N', 'V', '3', '0'):
         (void)plane;
@@ -924,7 +936,7 @@ static void pageFlipHandler(int fd, unsigned int frame,
     (void)sec;
     (void)usec;
 
-    DRM_Ctx *ctx = (DRM_Ctx *)data;
+    DRM_Ctx *ctx = data;
     if (!ctx || ctx->pool.pending_idx < 0) {
         return;
     }
@@ -970,6 +982,7 @@ int drmDisplaySetupConfig(DRM_Ctx *ctx, const DRM_Display_Config *cfg)
         return -1;
     }
 
+    /******************** 找已连接的显示设备 *****************************************************/
     int conn_index = cfg->connector_id ? findConnectorIndex(ctx, cfg->connector_id) :
                                          chooseConnectedConnector(ctx);
     if (conn_index < 0) {
@@ -1122,7 +1135,7 @@ int drmDisplaySubmit(DRM_Ctx *ctx, const DRM_Buf *buf)
             return -1;
         }
     }
-
+    //获取fb_pool的下标，如果这个dmafd没有导入内部会自动导入，如果已经导入会返回fb_pool的下标
     int fb_index = getOrCreateFb(ctx, &normalized);
     if (fb_index < 0) {
         return -1;
@@ -1156,11 +1169,14 @@ int drmDisplaySubmit(DRM_Ctx *ctx, const DRM_Buf *buf)
         return 0;
     }
 
+    //drmModeAtomicReq是否创建，如果没有创建，则创建，否则复用，并且把
     drmModeAtomicReq *req = atomicReqBegin(ctx);
     if (!req) {
         return -1;
     }
 
+
+    //只设置已经选择的plane的fb_id属性
     drmModeAtomicAddProperty(req,
                              ctx->selected_plane_id,
                              ctx->atomic.plane.fb_id,
@@ -1238,7 +1254,9 @@ const char *drmFormatToName(uint32_t fmt)
 {
     switch (fmt) {
     case DRM_FORMAT_R8: return "R8";
-    //case DRM_FORMAT_R10: return "R10";
+#ifdef DRM_FORMAT_R10
+    case DRM_FORMAT_R10: return "R10";
+#endif
     case DRM_FORMAT_RGB565: return "RGB565";
     case DRM_FORMAT_BGR565: return "BGR565";
     case DRM_FORMAT_RGB888: return "RGB888";
@@ -1259,7 +1277,7 @@ const char *drmFormatToName(uint32_t fmt)
     case DRM_FORMAT_NV12: return "NV12 4:2:0 8-bit";
     case DRM_FORMAT_NV16: return "NV16 4:2:2 8-bit";
     case DRM_FORMAT_NV24: return "NV24 4:4:4 8-bit";
-    //case DRM_FORMAT_NV15: return "NV15 4:2:0 10-bit packed";
+    case DRM_FORMAT_NV15: return "NV15 4:2:0 10-bit packed";
     case fourcc_code('N', 'V', '2', '0'): return "NV20 4:2:2 10-bit packed";
     case fourcc_code('N', 'V', '3', '0'): return "NV30 4:4:4 10-bit packed";
     default: return "Unknown";
